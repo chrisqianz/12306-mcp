@@ -21,10 +21,12 @@ import {
     TicketData,
     TicketDataKeys,
     TicketInfo,
+    TrainSearchData
 } from './types.js';
 
-const VERSION = '0.3.5';
+const VERSION = '0.3.6';
 const API_BASE = 'https://kyfw.12306.cn';
+const SEARCH_API_BASE = 'https://search.12306.cn'
 const WEB_URL = 'https://www.12306.cn/index/';
 const LCQUERY_INIT_URL = 'https://kyfw.12306.cn/otn/lcQuery/init';
 const LCQUERY_PATH = await getLCQueryPath();
@@ -305,17 +307,24 @@ function parseRouteStationsInfo(
     routeStationsData.forEach((routeStationData, index) => {
         if (index == 0) {
             result.push({
-                arrive_time: routeStationData.start_time,
+                train_class_name: routeStationData.train_class_name,
+                service_type: routeStationData.service_type,
+                end_station_name: routeStationData.end_station_name,
                 station_name: routeStationData.station_name,
-                stopover_time: routeStationData.stopover_time,
-                station_no: parseInt(routeStationData.station_no),
+                station_train_code: routeStationData.station_train_code,
+                arrive_time: routeStationData.arrive_time,
+                start_time: routeStationData.start_time,
+                lishi: routeStationData.running_time,
+                arrive_day_str: routeStationData.arrive_day_str
             });
         } else {
             result.push({
-                arrive_time: routeStationData.arrive_time,
                 station_name: routeStationData.station_name,
-                stopover_time: routeStationData.stopover_time,
-                station_no: parseInt(routeStationData.station_no),
+                station_train_code: routeStationData.station_train_code, 
+                arrive_time: routeStationData.arrive_time,
+                start_time: routeStationData.start_time,
+                lishi: routeStationData.running_time,
+                arrive_day_str: routeStationData.arrive_day_str
             });
         }
     });
@@ -417,10 +426,10 @@ function formatTicketsInfo(ticketsInfo: TicketInfo[]): string {
     if (ticketsInfo.length === 0) {
         return '没有查询到相关车次信息';
     }
-    let result = '车次 | 出发站 -> 到达站 | 出发时间 -> 到达时间 | 历时\n';
+    let result = '车次|出发站 -> 到达站|出发时间 -> 到达时间|历时\n';
     ticketsInfo.forEach((ticketInfo) => {
         let infoStr = '';
-        infoStr += `${ticketInfo.start_train_code}(实际车次train_no: ${ticketInfo.train_no}) ${ticketInfo.from_station}(telecode: ${ticketInfo.from_station_telecode}) -> ${ticketInfo.to_station}(telecode: ${ticketInfo.to_station_telecode}) ${ticketInfo.start_time} -> ${ticketInfo.arrive_time} 历时：${ticketInfo.lishi}`;
+        infoStr += `${ticketInfo.start_train_code} ${ticketInfo.from_station}(telecode:${ticketInfo.from_station_telecode}) -> ${ticketInfo.to_station}(telecode:${ticketInfo.to_station_telecode}) ${ticketInfo.start_time} -> ${ticketInfo.arrive_time} 历时：${ticketInfo.lishi}`;
         ticketInfo.prices.forEach((price) => {
             const ticketStatus = formatTicketStatus(price.num);
             infoStr += `\n- ${price.seat_name}: ${ticketStatus} ${price.price}元`;
@@ -435,10 +444,10 @@ function formatTicketsInfoCSV(ticketsInfo: TicketInfo[]): string {
         return '没有查询到相关车次信息';
     }
     let result =
-        '车次,实际车次train_no,出发站,到达站,出发时间,到达时间,历时,票价,特色标签\n';
+        '车次,出发站,到达站,出发时间,到达时间,历时,票价,特色标签\n';
     ticketsInfo.forEach((ticketInfo) => {
         let infoStr = '';
-        infoStr += `${ticketInfo.start_train_code},${ticketInfo.train_no},${ticketInfo.from_station}(telecode:${ticketInfo.from_station_telecode}),${ticketInfo.to_station}(telecode: ${ticketInfo.to_station_telecode}),${ticketInfo.start_time},${ticketInfo.arrive_time},${ticketInfo.lishi},[`;
+        infoStr += `${ticketInfo.start_train_code},${ticketInfo.from_station}(telecode:${ticketInfo.from_station_telecode}),${ticketInfo.to_station}(telecode:${ticketInfo.to_station_telecode}),${ticketInfo.start_time},${ticketInfo.arrive_time},${ticketInfo.lishi},[`;
         ticketInfo.prices.forEach((price) => {
             const ticketStatus = formatTicketStatus(price.num);
             infoStr += `${price.seat_name}: ${ticketStatus}${price.price}元,`;
@@ -448,6 +457,14 @@ function formatTicketsInfoCSV(ticketsInfo: TicketInfo[]): string {
         }`;
         result += `${infoStr}\n`;
     });
+    return result;
+}
+
+function formatRouteStationsInfo(routeStationsInfo: RouteStationInfo[]): string {
+    let result =`${routeStationsInfo[0].station_train_code}次列车（${routeStationsInfo[0].train_class_name} ${routeStationsInfo[0].service_type == '0' ? '无空调':'有空调'}）\n站序|车站|车次|到达时间|出发时间|历时(hh:mm)\n`;
+    routeStationsInfo.forEach((routeStationInfo, index) => {
+        result += `${index+1}|${routeStationInfo.station_name}|${routeStationInfo.station_train_code}|${routeStationInfo.arrive_time}|${routeStationInfo.start_time}|${routeStationInfo.arrive_day_str} ${routeStationInfo.lishi}\n`;
+    })
     return result;
 }
 
@@ -757,8 +774,6 @@ export const server = new McpServer({
     instructions:
         '该服务主要用于帮助用户查询火车票信息、特定列车的经停站信息以及相关的车站信息。请仔细理解用户的意图，并按以下指引选择合适的接口：\n\n' +
         '**原则：**\n' +
-        '*   **优先理解意图**：判断用户的真实需求，是查票、查经停站还是查车站信息。\n' +
-        '*   **参数准确性**：确保传递给每个的参数格式和类型都正确，特别是日期格式和地点编码。\n' +
         '*   **必要时追问**：如果用户信息不足以调用接口，请向用户追问缺失的信息。\n' +
         '*   **清晰呈现结果**：将接口返回的信息以用户易于理解的方式进行呈现。\n\n' +
         '*   **尽量精确需求**：尽量利用筛选功能筛选用户需要的车票信息，从而简短上下文长度。\n\n' +
@@ -790,7 +805,7 @@ server.resource('stations', 'data://all-stations', async (uri) => ({
 
 server.tool(
     'get-current-date',
-    '获取当前日期，以上海时区（Asia/Shanghai, UTC+8）为准，返回格式为 "yyyy-MM-dd"。主要用于解析用户提到的相对日期（如“明天”、“下周三”），为其他需要日期的接口提供准确的日期输入。',
+    '获取当前日期，以上海时区（Asia/Shanghai, UTC+8）为准，返回格式为 "yyyy-MM-dd"。主要用于解析用户提到的相对日期（如“明天”、“下周三”），提供准确的日期输入。',
     {},
     async () => {
         try {
@@ -1321,49 +1336,63 @@ interface RouteQueryResponse extends QueryResponse {
     validateMessagesShowId: string;
 }
 
+
+interface TrainSearchResponse extends QueryResponse {
+    data: TrainSearchData[]
+    errorMsg: string;
+}
+
 server.tool(
     'get-train-route-stations',
     '查询特定列车车次在指定区间内的途径车站、到站时间、出发时间及停留时间等详细经停信息。当用户询问某趟具体列车的经停站时使用此接口。',
     {
-        trainNo: z
+        trainCode: z
             .string()
             .describe(
-                '要查询的实际车次编号 `train_no`，例如 "240000G10336"，而非"G1033"。此编号通常可以从 `get-tickets` 的查询结果中获取，或者由用户直接提供。'
-            ),
-        fromStationTelecode: z
-            .string()
-            .describe(
-                '该列车行程的**出发站**的 `station_telecode` (3位字母编码`)。通常来自 `get-tickets` 结果中的 `telecode` 字段，或者通过 `get-station-code-by-names` 得到。'
-            ),
-        toStationTelecode: z
-            .string()
-            .describe(
-                '该列车行程的**到达站**的 `station_telecode` (3位字母编码)。通常来自 `get-tickets` 结果中的 `telecode` 字段，或者通过 `get-station-code-by-names` 得到。'
+                '要查询的车次 `train_code`，例如"G1033"。'
             ),
         departDate: z
             .string()
             .length(10)
             .describe(
-                '列车从 `fromStationTelecode` 指定的车站出发的日期 (格式: yyyy-MM-dd)。如果用户提供的是相对日期，请务必先调用 `get-current-date` 解析。'
+                '列车出发的日期 (格式: yyyy-MM-dd)。如果用户提供的是相对日期，请务必先调用 `get-current-date` 解析。'
             ),
     },
     async ({
-        trainNo: trainNo,
-        fromStationTelecode,
-        toStationTelecode,
+        trainCode,
         departDate,
     }) => {
-        const queryParams = new URLSearchParams({
-            train_no: trainNo,
-            from_station_telecode: fromStationTelecode,
-            to_station_telecode: toStationTelecode,
-            depart_date: departDate,
+        const searchParams = new URLSearchParams({
+            keyword: trainCode,
+            date: departDate.replaceAll('-',''),
         });
-        const queryUrl = `${API_BASE}/otn/czxx/queryByTrainNo`;
+        const searchUrl = `${SEARCH_API_BASE}/search/v1/train/search`;
+        const searchResponse = await make12306Request<TrainSearchResponse>(
+            searchUrl,
+            searchParams
+        );
+        if (searchResponse == null || searchResponse.data.length == 0 ||searchResponse.data == undefined) {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: '很抱歉，未查询到对应车次。',
+                    },
+                ],
+            };
+        }
+
+        const searchData = searchResponse.data[0];
+        const queryParams = new URLSearchParams({
+            "leftTicketDTO.train_no": searchData.train_no,
+            "leftTicketDTO.train_date": departDate,
+            "rand_code": ''
+        });
+        const queryUrl = `${API_BASE}/otn/queryTrainInfo/query`;
         const cookies = await getCookie();
         if (cookies == null || Object.entries(cookies).length === 0) {
             return {
-                content: [{ type: 'text', text: 'Error: get cookie failed. ' }],
+                content: [{ type: 'text', text: 'Error: get cookie failed. Check your network.' }],
             };
         }
         const queryResponse = await make12306Request<RouteQueryResponse>(
@@ -1391,7 +1420,7 @@ server.tool(
         }
         return {
             content: [
-                { type: 'text', text: JSON.stringify(routeStationsInfo) },
+                { type: 'text', text: formatRouteStationsInfo(routeStationsInfo) },
             ],
         };
     }

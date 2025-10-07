@@ -171,27 +171,32 @@ export interface Price {
 }
 
 export type RouteStationData = {
+    arrive_day_str: string;
     arrive_time: string;
+    station_train_code: string;
     station_name: string;
-    isChina: string;
+    arrive_day_diff: string;
+    OT?: [];
     start_time: string;
-    stopover_time: string;
+    wz_num: string;
     station_no: string;
-    country_code: string;
-    country_name: string;
-    isEnabled: boolean;
-    train_class_name?: string;
-    service_type?: string;
-    end_station_name?: string;
-    start_station_name?: string;
-    station_train_code?: string;
+    running_time: string;
+    train_class_name? : string;
+    is_start? : string;
+    service_type? : string;
+    end_station_name? : string;
 };
 
 export type RouteStationInfo = {
-    arrive_time: string;
+    train_class_name?: string;
+    service_type?: string;
+    end_station_name?: string;
     station_name: string;
-    stopover_time: string;
-    station_no: number;
+    station_train_code: string;
+    arrive_time: string;
+    start_time: string;
+    lishi: string;
+    arrive_day_str: string;
 };
 
 export type InterlineData = {
@@ -300,3 +305,12 @@ export type InterlineTicketData = {
     ze_num: string;
     zy_num: string;
 };
+
+export type TrainSearchData = {
+    date: string;
+    from_station: string;
+    station_train_code: string;
+    to_station: string;
+    total_num: string;
+    train_no: string;
+}
