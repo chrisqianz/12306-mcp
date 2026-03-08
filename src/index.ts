@@ -24,7 +24,7 @@ import {
     TrainSearchData,
 } from './types.js';
 
-const VERSION = '0.3.7';
+const VERSION = '0.3.8';
 const API_BASE = 'https://kyfw.12306.cn';
 const SEARCH_API_BASE = 'https://search.12306.cn';
 const WEB_URL = 'https://www.12306.cn/index/';
@@ -290,6 +290,22 @@ async function getCookie() {
         console.error('Error making 12306 request:', error);
         return null;
     }
+}
+
+function parseStationCode(station: string): string | null {
+    // 判断fromStation和toStation是中文名还是station_code，如果是中文名则转换为station_code，如果转换失败则fromStation或toStation置为null
+    const regex = /^[A-Z]+$/;
+    if (regex.test(station) && Object.keys(STATIONS).includes(station)) {
+        return station;
+    } else {
+        station = station.endsWith('站')
+            ? station.substring(0, station.length - 1)
+            : station;
+        if (Object.keys(NAME_STATIONS).includes(station)) {
+            return NAME_STATIONS[station].station_code;
+        }
+    }
+    return null;
 }
 
 function parseRouteStationsData(rawData: Object[]): RouteStationData[] {
@@ -621,8 +637,8 @@ function formatInterlinesInfo(interlinesInfo: InterlineInfo[]): string {
             interlineInfo.same_train
                 ? '同车换乘'
                 : interlineInfo.same_station
-                ? '同站换乘'
-                : '换站换乘'
+                  ? '同站换乘'
+                  : '换站换乘'
         } | ${interlineInfo.wait_time} | ${interlineInfo.lishi}\n\n`;
         result +=
             '\t' +
@@ -781,10 +797,9 @@ export const server = new McpServer({
         tools: {},
     },
     instructions:
-        '该服务主要用于帮助用户查询火车票信息、特定列车的经停站信息以及相关的车站信息。请仔细理解用户的意图，并按以下指引选择合适的接口：\n\n' +
+        '该服务主要用于帮助用户查询12306的车票信息、特定列车的经停站信息以及相关的车站信息。请仔细理解用户的意图，并按以下指引选择合适的接口：\n\n' +
         '**原则：**\n' +
         '*   **必要时追问**：如果用户信息不足以调用接口，请向用户追问缺失的信息。\n' +
-        '*   **清晰呈现结果**：将接口返回的信息以用户易于理解的方式进行呈现。\n\n' +
         '*   **尽量精确需求**：尽量利用筛选功能筛选用户需要的车票信息，从而简短上下文长度。\n\n' +
         '请根据上述指引选择接口。',
 });
@@ -897,7 +912,7 @@ server.tool(
         let result: Record<string, object> = {};
         for (let stationName of stationNames.split('|')) {
             stationName = stationName.endsWith('站')
-                ? stationName.substring(0, -1)
+                ? stationName.substring(0, stationName.length - 1)
                 : stationName;
             if (!(stationName in NAME_STATIONS)) {
                 result[stationName] = { error: '未检索到城市。' };
@@ -949,12 +964,12 @@ server.tool(
         fromStation: z
             .string()
             .describe(
-                '出发地的 `station_code` 。必须是通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到的编码，严禁直接使用中文地名。'
+                '出发地的中文名或站点的 `station_code`（可通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到）'
             ),
         toStation: z
             .string()
             .describe(
-                '到达地的 `station_code` 。必须是通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到的编码，严禁直接使用中文地名。'
+                '到达地的中文名或站点的 `station_code`（可通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到）'
             ),
         trainFilterFlags: z
             .string()
@@ -1031,14 +1046,20 @@ server.tool(
                 ],
             };
         }
-        if (
-            !Object.keys(STATIONS).includes(fromStation) ||
-            !Object.keys(STATIONS).includes(toStation)
-        ) {
+        const fromStationResult = parseStationCode(fromStation);
+        const toStationResult = parseStationCode(toStation);
+        if (fromStationResult === null || toStationResult === null) {
             return {
-                content: [{ type: 'text', text: 'Error: Station not found. ' }],
+                content: [
+                    {
+                        type: 'text',
+                        text: `Error: Station not found. FromStationResult: ${fromStationResult}, ToStationResult: ${toStationResult}.`,
+                    },
+                ],
             };
         }
+        fromStation = fromStationResult;
+        toStation = toStationResult;
         const queryParams = new URLSearchParams({
             'leftTicketDTO.train_date': date,
             'leftTicketDTO.from_station': fromStation,
@@ -1156,19 +1177,19 @@ server.tool(
         fromStation: z
             .string()
             .describe(
-                '出发地的 `station_code` 。必须是通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到的编码，严禁直接使用中文地名。'
+                '出发地的中文名或站点的 `station_code`（可通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到）'
             ),
         toStation: z
             .string()
             .describe(
-                '出发地的 `station_code` 。必须是通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到的编码，严禁直接使用中文地名。'
+                '到达地的中文名或站点的 `station_code`（可通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到）'
             ),
         middleStation: z
             .string()
             .optional()
             .default('')
             .describe(
-                '中转地的 `station_code` ，可选。必须是通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到的编码，严禁直接使用中文地名。'
+                '中转地的中文或站点的 `station_code`（可通过 `get-station-code-by-names` 或 `get-station-code-of-citys` 接口查询得到）。该参数可选。'
             ),
         showWZ: z
             .boolean()
@@ -1252,14 +1273,26 @@ server.tool(
                 ],
             };
         }
+        const fromStationResult = parseStationCode(fromStation);
+        const toStationResult = parseStationCode(toStation);
+        const middleStationResult = parseStationCode(middleStation);
         if (
-            !Object.keys(STATIONS).includes(fromStation) ||
-            !Object.keys(STATIONS).includes(toStation)
+            fromStationResult === null ||
+            toStationResult === null ||
+            (middleStation !== '' && middleStationResult === null)
         ) {
             return {
-                content: [{ type: 'text', text: 'Error: Station not found. ' }],
+                content: [
+                    {
+                        type: 'text',
+                        text: `Error: Station not found. FromStationResult: ${fromStationResult}, ToStationResult: ${toStationResult}, MiddleStationResult: ${middleStationResult}`,
+                    },
+                ],
             };
         }
+        fromStation = fromStationResult;
+        toStation = toStationResult;
+        middleStation = middleStationResult ? middleStationResult : '';
         const queryUrl = `${API_BASE}${LCQUERY_PATH}`;
         const cookies = await getCookie();
         if (cookies == null || Object.entries(cookies).length === 0) {
