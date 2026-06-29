@@ -24,7 +24,7 @@ import {
     TrainSearchData,
 } from './types.js';
 
-const VERSION = '0.3.8';
+const VERSION = '0.3.9';
 const API_BASE = 'https://kyfw.12306.cn';
 const SEARCH_API_BASE = 'https://search.12306.cn';
 const WEB_URL = 'https://www.12306.cn/index/';
