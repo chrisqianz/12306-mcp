@@ -1535,7 +1535,7 @@ async function getStations(): Promise<Record<string, StationData>> {
     if (stationNameJS == null) {
         throw new Error('Error: get station name js file failed.');
     }
-    const rawData = eval(stationNameJS.replace('var station_names =', ''));
+    const rawData = stationNameJS.replace('var station_names =\'', '').replace('\';', '');
     const stationsData = parseStationsData(rawData);
     // 加上缺失的车站信息
     for (const station of MISSING_STATIONS) {
