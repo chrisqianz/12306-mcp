@@ -875,7 +875,7 @@ server.tool(
 
 server.tool(
     'get-station-code-of-citys',
-    '通过中文城市名查询代表该城市的 `station_code`。此接口主要用于在用户提供**城市名**作为出发地或到达地时，为接口准备 `station_code` 参数。',
+    '通过中文城市名查询代表该城市的 `station_code`。',
     {
         citys: z
             .string()
@@ -900,7 +900,7 @@ server.tool(
 
 server.tool(
     'get-station-code-by-names',
-    '通过具体的中文车站名查询其 `station_code` 和车站名。此接口主要用于在用户提供**具体车站名**作为出发地或到达地时，为接口准备 `station_code` 参数。',
+    '通过具体的中文车站名查询其 `station_code` 和车站名。',
     {
         stationNames: z
             .string()
@@ -1547,7 +1547,11 @@ async function getStations(): Promise<Record<string, StationData>> {
 }
 
 async function getLCQueryPath(): Promise<string> {
-    const html = await make12306Request<string>(LCQUERY_INIT_URL);
+    const html = await make12306Request<string>(LCQUERY_INIT_URL, new URLSearchParams(), 
+        {
+            "Accept-Language": "zh-CN,zh;q=0.9,zh-TW;q=0.8,zh-HK;q=0.7,en-US;q=0.6,en;q=0.5"
+        }
+    );
     if (html == null) {
         throw new Error('Error: get 12306 web page failed.');
     }
