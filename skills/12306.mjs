@@ -10,6 +10,19 @@ const LCQUERY_INIT_URL = 'https://kyfw.12306.cn/otn/lcQuery/init';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
+// 缓存配置
+const SKILL_DIR = new URL('.', import.meta.url).pathname;
+const CACHE_DIR = SKILL_DIR;
+const STATIONS_CACHE_FILE = `${CACHE_DIR}stations.json`;
+const LCQUERY_PATH_FILE = `${CACHE_DIR}lcquery_path`;
+const CACHE_TTL = 86400000; // 1天 = 86400秒 * 1000ms
+
+// 缓存状态
+let cachedStations = null;
+let cachedLCQueryPath = null;
+
+import fs from 'fs';
+
 // ============ 工具函数 ============
 
 function formatCookies(cookies) {
@@ -35,6 +48,91 @@ function getShanghaiDate() {
     const m = String(shanghai.getMonth() + 1).padStart(2, '0');
     const d = String(shanghai.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
+}
+
+// 缓存检查
+function isCacheValid(filePath) {
+    try {
+        const stats = fs.statSync(filePath);
+        return (Date.now() - stats.mtimeMs) < CACHE_TTL;
+    } catch {
+        return false;
+    }
+}
+
+// 读取缓存
+function readCache(filePath) {
+    try {
+        return fs.readFileSync(filePath, 'utf8');
+    } catch {
+        return null;
+    }
+}
+
+// 写入缓存
+function writeCache(filePath, data) {
+    try {
+        fs.writeFileSync(filePath, data, 'utf8');
+    } catch (err) {
+        console.error(`警告: 写入缓存失败: ${err.message}`);
+    }
+}
+
+// 获取车站缓存
+async function getCachedStations() {
+    if (cachedStations) return cachedStations;
+    
+    if (isCacheValid(STATIONS_CACHE_FILE)) {
+        try {
+            const data = readCache(STATIONS_CACHE_FILE);
+            cachedStations = JSON.parse(data);
+            return cachedStations;
+        } catch {
+            // 缓存损坏，重新获取
+        }
+    }
+    
+    // 从 API 获取
+    const stations = await fetchStations();
+    writeCache(STATIONS_CACHE_FILE, JSON.stringify(stations, null, 2));
+    cachedStations = stations;
+    return stations;
+}
+
+// 获取 lcQuery 路径缓存
+async function getCachedLCQueryPath() {
+    if (cachedLCQueryPath) return cachedLCQueryPath;
+    
+    if (isCacheValid(LCQUERY_PATH_FILE)) {
+        try {
+            cachedLCQueryPath = readCache(LCQUERY_PATH_FILE);
+            return cachedLCQueryPath;
+        } catch {
+            // 缓存损坏，重新获取
+        }
+    }
+    
+    // 从 API 获取
+    const path = await fetchLCQueryPath();
+    writeCache(LCQUERY_PATH_FILE, path);
+    cachedLCQueryPath = path;
+    return path;
+}
+
+// 刷新缓存
+async function refreshCache() {
+    const stations = await fetchStations();
+    writeCache(STATIONS_CACHE_FILE, JSON.stringify(stations, null, 2));
+    cachedStations = stations;
+    
+    const lcPath = await fetchLCQueryPath();
+    writeCache(LCQUERY_PATH_FILE, lcPath);
+    cachedLCQueryPath = lcPath;
+    
+    return {
+        stations: `已更新 ${Object.keys(stations).length} 个车站`,
+        lcquery: `已更新 lcQuery 路径`
+    };
 }
 
 // 解析车站编码（支持中文站名）
@@ -173,6 +271,11 @@ async function fetchStations() {
     return parseStationData(raw);
 }
 
+// 获取车站（使用缓存）
+async function getStations() {
+    return getCachedStations();
+}
+
 // ============ 余票查询 ============
 
 async function fetchTickets(date, fromCode, toCode, options = {}) {
@@ -256,11 +359,16 @@ async function fetchLCQueryPath() {
     return match[1];
 }
 
+// 获取 lcQuery 路径（使用缓存）
+async function getLCQueryPath() {
+    return getCachedLCQueryPath();
+}
+
 async function fetchInterlineTickets(date, fromCode, toCode, middleCode = '', options = {}) {
     const cookies = await fetchCookie();
     if (!cookies) return { error: '获取 cookie 失败' };
 
-    const lcPath = await fetchLCQueryPath();
+    const lcPath = await getLCQueryPath();
     const params = {
         train_date: date,
         from_station_telecode: fromCode,
@@ -369,7 +477,7 @@ async function fetchTrainRoute(trainNo, date) {
 // ============ 车站搜索 ============
 
 async function searchStations(keyword) {
-    const allStations = await fetchStations();
+    const allStations = await getStations();
     const results = [];
     for (const [code, s] of Object.entries(allStations)) {
         if (s.station_name.includes(keyword) || s.city.includes(keyword) || s.station_pinyin.includes(keyword.toLowerCase())) {
@@ -391,7 +499,7 @@ async function main() {
                 break;
 
             case 'stations': {
-                const all = await fetchStations();
+                const all = await getStations();
                 const city = args[0];
                 if (city) {
                     const filtered = {};
@@ -404,6 +512,10 @@ async function main() {
                 }
                 break;
             }
+
+            case 'refresh-cache':
+                console.log(JSON.stringify(await refreshCache(), null, 2));
+                break;
 
             case 'search': {
                 const kw = args[0];
@@ -423,7 +535,7 @@ async function main() {
                 }
                 
                 // 解析车站编码
-                const stations = await fetchStations();
+                const stations = await getStations();
                 const fromCode = parseStationCode(from, stations) || from;
                 const toCode = parseStationCode(to, stations) || to;
                 
@@ -455,7 +567,7 @@ async function main() {
                     process.exit(1);
                 }
                 
-                const stations = await fetchStations();
+                const stations = await getStations();
                 const fromCode = parseStationCode(from, stations) || from;
                 const toCode = parseStationCode(to, stations) || to;
                 const middleCode = middle ? parseStationCode(middle, stations) || middle : '';
@@ -499,6 +611,7 @@ async function main() {
                 console.error('  tickets <日期> <出发站> <到达站>        查询余票');
                 console.error('  interline <日期> <出发站> <到达站> [中转站]  查询中转票');
                 console.error('  route <车次> <日期>                        查询经停站');
+                console.error('  refresh-cache                          刷新缓存');
                 console.error('选项:');
                 console.error('  --flags=G  车次筛选 (G/D/Z/T/K)');
                 console.error('  --earliest=8  最早出发时间');
