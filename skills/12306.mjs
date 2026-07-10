@@ -10,6 +10,43 @@ const LCQUERY_INIT_URL = 'https://kyfw.12306.cn/otn/lcQuery/init';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
+// 座位类型映射
+const SEAT_TYPES = {
+    "9": { "name": "商务座", "short": "swz" },
+    "P": { "name": "特等座", "short": "tz" },
+    "M": { "name": "一等座", "short": "zy" },
+    "D": { "name": "优选一等座", "short": "zy" },
+    "O": { "name": "二等座", "short": "ze" },
+    "S": { "name": "二等包座", "short": "ze" },
+    "6": { "name": "高级软卧", "short": "gr" },
+    "A": { "name": "高级动卧", "short": "gr" },
+    "4": { "name": "软卧", "short": "rw" },
+    "I": { "name": "一等卧", "short": "rw" },
+    "F": { "name": "动卧", "short": "rw" },
+    "3": { "name": "硬卧", "short": "yw" },
+    "J": { "name": "二等卧", "short": "yw" },
+    "2": { "name": "软座", "short": "rz" },
+    "1": { "name": "硬座", "short": "yz" },
+    "W": { "name": "无座", "short": "wz" },
+    "WZ": { "name": "无座", "short": "wz" },
+    "H": { "name": "其他", "short": "qt" }
+};
+
+// 12306 票数据字段顺序
+const TICKET_DATA_KEYS = [
+    "secret_Sstr", "button_text_info", "train_no", "station_train_code",
+    "start_station_telecode", "end_station_telecode", "from_station_telecode",
+    "to_station_telecode", "start_time", "arrive_time", "lishi", "canWebBuy",
+    "yp_info", "start_train_date", "train_seat_feature", "location_code",
+    "from_station_no", "to_station_no", "is_support_card", "controlled_train_flag",
+    "gg_num", "gr_num", "qt_num", "rw_num", "rz_num", "tz_num", "wz_num",
+    "yb_num", "yw_num", "yz_num", "ze_num", "zy_num", "swz_num", "srrb_num",
+    "yp_ex", "seat_types", "exchange_train_flag", "houbu_train_flag",
+    "houbu_seat_limit", "yp_info_new", "40", "41", "42", "43", "44", "45",
+    "dw_flag", "47", "stopcheckTime", "country_flag", "local_arrive_time",
+    "local_start_time", "52", "bed_level_info", "seat_discount_info", "sale_time", "56"
+];
+
 // 缓存配置
 const SKILL_DIR = new URL('.', import.meta.url).pathname;
 const CACHE_DIR = SKILL_DIR;
@@ -147,6 +184,67 @@ function parseStationCode(name, stations) {
         }
     }
     return null;
+}
+
+// 解析座位信息
+function parseSeats(ticketData) {
+    const seats = {};
+    
+    // 使用 yp_info_new (索引 39) 解析座位价格
+    const ypInfoNew = ticketData.yp_info_new || '';
+    const PRICE_STR_LENGTH = 10;
+    
+    if (ypInfoNew.length >= PRICE_STR_LENGTH) {
+        for (let i = 0; i < ypInfoNew.length; i += PRICE_STR_LENGTH) {
+            const priceStr = ypInfoNew.substring(i, i + PRICE_STR_LENGTH);
+            if (priceStr.length < PRICE_STR_LENGTH) continue;
+            
+            // 座位类型代码
+            let seatTypeCode;
+            const datePart = parseInt(priceStr.substring(6, 10));
+            if (datePart >= 3000) {
+                seatTypeCode = 'W'; // 无座
+            } else if (SEAT_TYPES[priceStr[0]]) {
+                seatTypeCode = priceStr[0];
+            } else {
+                seatTypeCode = 'H'; // 其他
+            }
+            
+            const seatType = SEAT_TYPES[seatTypeCode];
+            if (!seatType) continue;
+            
+            // 价格 (单位是分，需要除以 10)
+            const price = parseInt(priceStr.substring(1, 6)) / 10;
+            
+            // 座位数量
+            const num = ticketData[`${seatType.short}_num`] || '';
+            const numInt = parseInt(num);
+            
+            seats[seatType.name] = {
+                num: numInt > 0 ? `${numInt}张` : '无票',
+                price: `${price}元`
+            };
+        }
+    }
+    
+    // 如果 yp_info_new 解析失败，使用原始座位数量字段
+    if (Object.keys(seats).length === 0) {
+        const seatFields = ['swz_num', 'tz_num', 'zy_num', 'ze_num', 'rw_num', 'yw_num', 'rz_num', 'yz_num', 'wz_num'];
+        const seatNames = ['商务座', '特等座', '一等座', '二等座', '软卧', '硬卧', '软座', '硬座', '无座'];
+        
+        for (let i = 0; i < seatFields.length; i++) {
+            const num = ticketData[seatFields[i]];
+            if (num !== undefined && num !== '') {
+                const numInt = parseInt(num);
+                seats[seatNames[i]] = {
+                    num: numInt > 0 ? `${numInt}张` : '无票',
+                    price: '查询中'
+                };
+            }
+        }
+    }
+    
+    return seats;
 }
 
 // 过滤车次
@@ -301,6 +399,16 @@ async function fetchTickets(date, fromCode, toCode, options = {}) {
         const data = JSON.parse(text);
         const tickets = (data.data?.result || []).map(t => {
             const p = t.split('|');
+            
+            // 解析所有字段
+            const ticketData = {};
+            for (let i = 0; i < Math.min(p.length, TICKET_DATA_KEYS.length); i++) {
+                ticketData[TICKET_DATA_KEYS[i]] = p[i];
+            }
+            
+            // 解析座位信息
+            const seats = parseSeats(ticketData);
+            
             return {
                 status: p[1],
                 train_no: p[2],
@@ -322,7 +430,8 @@ async function fetchTickets(date, fromCode, toCode, options = {}) {
                 control_ticket: p[26],
                 xtzl: p[27],
                 qd_type: p[28],
-                seats: p[30]
+                seats: seats,  // 解析后的座位信息
+                raw_seats: p[30]  // 保留原始座位字符串
             };
         }).filter(Boolean);
 
